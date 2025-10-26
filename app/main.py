@@ -10,36 +10,43 @@ from pydantic import BaseModel
 import osmnx as ox
 import networkx as nx
 from shapely.geometry import LineString, mapping
+from pyproj import Transformer  # <-- NEW
 
 app = FastAPI(title="NagwaRide API (MVP)")
 
-# CORS (relaxed for local dev)
+# Allow connections from anywhere (for browser)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=False,
 )
 
-# Serve everything inside /web at /web/...
+# Serve your web folder
 app.mount("/web", StaticFiles(directory="web", html=True), name="web")
 
-# Landing page -> web/index.html
 @app.get("/")
 def index():
     return FileResponse("web/index.html")
 
-# Build a small road graph (3 km radius around central London)
+# Build small road graph
 center_latlon = (51.509, -0.118)
 G = ox.graph_from_point(center_latlon, dist=3000, network_type="drive")
 G = ox.add_edge_speeds(G)
 G = ox.add_edge_travel_times(G)
-print("Road network ready.")
+
+# Project to meters (this avoids scikit-learn!)
+Gp = ox.project_graph(G)
+
+# Create converters for coordinates
+to_xy = Transformer.from_crs("epsg:4326", Gp.graph["crs"], always_xy=True)
+to_ll = Transformer.from_crs(Gp.graph["crs"], "epsg:4326", always_xy=True)
+
+print("Road network ready (projected).")
 
 class RouteRequest(BaseModel):
     start: Tuple[float, float]   # (lat, lon)
-    end:   Tuple[float, float]   # (lat, lon)
+    end: Tuple[float, float]     # (lat, lon)
 
 @app.get("/health")
 def health():
@@ -48,20 +55,25 @@ def health():
 @app.post("/route")
 def route(req: RouteRequest):
     try:
-        # nearest nodes
-        orig = ox.nearest_nodes(G, X=req.start[1], Y=req.start[0])
-        dest = ox.nearest_nodes(G, X=req.end[1],   Y=req.end[0])
+        # Convert input to projected coords
+        sx, sy = to_xy.transform(req.start[1], req.start[0])
+        ex, ey = to_xy.transform(req.end[1], req.end[0])
 
-        # fastest path by travel time
-        path: List[int] = nx.shortest_path(G, orig, dest, weight="travel_time")
+        # Find nearest nodes using KDTree (no scikit-learn!)
+        orig = ox.distance.nearest_nodes(Gp, sx, sy, method="kdtree")
+        dest = ox.distance.nearest_nodes(Gp, ex, ey, method="kdtree")
 
-        # polyline coordinates (lon, lat)
-        coords = [(G.nodes[n]["x"], G.nodes[n]["y"]) for n in path]
-        line = LineString(coords)
+        # Fastest path
+        path: List[int] = nx.shortest_path(Gp, orig, dest, weight="travel_time")
 
-        # distance + duration (m, s)
-        length_m   = float(sum(ox.utils_graph.get_route_edge_attributes(G, path, "length")))
-        duration_s = float(sum(ox.utils_graph.get_route_edge_attributes(G, path, "travel_time")))
+        # Convert coords back to lon/lat for map display
+        coords_xy = [(Gp.nodes[n]["x"], Gp.nodes[n]["y"]) for n in path]
+        coords_ll = [to_ll.transform(x, y) for (x, y) in coords_xy]
+        line = LineString(coords_ll)
+
+        # Distance and duration
+        length_m = float(sum(ox.utils_graph.get_route_edge_attributes(Gp, path, "length")))
+        duration_s = float(sum(ox.utils_graph.get_route_edge_attributes(Gp, path, "travel_time")))
 
         return {
             "distance_m": round(length_m, 1),
@@ -74,4 +86,3 @@ def route(req: RouteRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Routing failed: {e}")
-
