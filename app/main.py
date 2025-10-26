@@ -60,8 +60,8 @@ def route(req: RouteRequest):
         ex, ey = to_xy.transform(req.end[1], req.end[0])
 
         # Find nearest nodes using KDTree (no scikit-learn!)
-        orig = ox.distance.nearest_nodes(Gp, sx, sy, method="kdtree")
-        dest = ox.distance.nearest_nodes(Gp, ex, ey, method="kdtree")
+        orig = ox.distance.nearest_nodes(Gp, sx, sy)
+        dest = ox.distance.nearest_nodes(Gp, ex, ey)
 
         # Fastest path
         path: List[int] = nx.shortest_path(Gp, orig, dest, weight="travel_time")
