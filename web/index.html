@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NagwaRide – Routing</title>
+
+  <!-- Favicons (optional, if you dragged these into /web) -->
+<link rel="icon" href="/web/favicon.ico?v=2" type="image/x-icon">
+<link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=2" sizes="180x180">
+<link rel="icon" type="image/png" sizes="32x32" href="/web/favicon-32x32.png?v=2">
+<link rel="icon" type="image/png" sizes="16x16" href="/web/favicon-16x16.png?v=2">
+<link rel="manifest" href="/web/site.webmanifest?v=2">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+  <style>
+    html, body { height:100%; margin:0; }
+    #map { height: 100vh; margin: 0; }
+    .panel {
+      position:absolute; z-index:1000; top:10px; left:10px;
+      background:#fff; padding:8px 10px; border-radius:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,.15); max-width:300px;
+    }
+    input { width: 230px; margin:4px 0; }
+    #info { font-weight:600; margin-left:6px; }
+  </style>
+
+
+</head>
+<body>
+<div class="panel">
+  <!-- IMPORTANT: prefix with /web/ so it works when page is served from "/" -->
+  <img src="/web/Untitled.png" alt="NagwaRide Logo" style="width:120px; margin-bottom:6px; display:block;">
+  <div style="font-size:12px;color:#555;">
+    Your personal route planner (FastAPI + OSMnx + Leaflet)
+  </div>
+  <label>Start (lat,lon): <input id="start" value="51.5079,-0.0877"></label><br/>
+  <label>End (lat,lon): <input id="end" value="51.5154,-0.1410"></label><br/>
+  <button id="go">Route</button>
+  <span id="info"></span>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([51.509, -0.118], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+let layer;
+
+async function getRoute(start, end) {
+  const res = await fetch('/route', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start, end })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function runRoute() {
+  const btn = document.getElementById('go');
+  try {
+    btn.disabled = true;
+    const [slat, slon] = document.getElementById('start').value.split(',').map(Number);
+    const [elat, elon] = document.getElementById('end').value.split(',').map(Number);
+    const data = await getRoute([slat, slon], [elat, elon]);
+
+    if (layer) map.removeLayer(layer);
+    layer = L.geoJSON(data.geojson).addTo(map);
+    map.fitBounds(layer.getBounds());
+    document.getElementById('info').textContent =
+      ` | ${Math.round(data.distance_m/100)/10} km • ${Math.round(data.duration_s/60)} min`;
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('go').onclick = runRoute;
+document.getElementById('end').addEventListener('keyup', e => { if (e.key === 'Enter') runRoute(); });
+</script>
+</body>
+</html>
+
+
